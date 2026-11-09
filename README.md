@@ -1,134 +1,185 @@
-# Deauville Festival du Rire — programme platform
+# Deauville Festival du Rire — plateforme de programmation
 
-A Python platform for the programme of the Deauville Festival du Rire
-(10–13 June 2027): artists, venues, and three kinds of performances (solo,
-lineup, workshop), with the scheduling rules a generic CMS cannot enforce.
+Une plateforme Python pour la programmation du Festival du Rire de Deauville
+(du 10 au 13 juin 2027) : artistes, salles et trois types de représentations
+(solo, plateau, atelier), avec les règles de planning qu'un CMS générique ne
+sait pas faire respecter.
 
-It comes with:
+Elle fournit :
 
-- a **model** that refuses any change breaking a rule;
-- a **command line** (programme of a day, artists, what is on stage now);
-- a **web API** (FastAPI) that serves the public website at `/` and the admin
-  at `/admin/`;
-- two **storages**: a JSON file (default) and a SQLite database (SQLModel),
-  interchangeable.
+- un **modèle** qui refuse toute modification enfreignant une règle ;
+- une **ligne de commande** (programme d'une journée, artistes, ce qui se joue en ce moment) ;
+- une **API web** (FastAPI) qui sert le site public sur `/` et l'administration sur `/admin/` ;
+- deux **stockages** interchangeables : un fichier JSON (par défaut) et une base SQLite (SQLModel).
 
-## Install, run, test
+## Les règles du festival
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Le modèle fait respecter ces règles, quel que soit le point d'entrée (CLI, API, tests) :
+
+- le festival dure du 10 au 13 juin 2027, et une journée de festival se termine à 06:00 ;
+- une salle ne peut accueillir qu'une représentation à la fois, avec 30 minutes d'écart minimum entre deux représentations ;
+- un artiste ne peut pas être sur scène dans deux représentations à moins de 30 minutes d'écart, quel que soit son rôle ;
+- une représentation dure de 1 à 360 minutes ;
+- un solo a un âge minimum de 0 à 18 ans ;
+- un plateau compte au moins 2 numéros distincts, l'animateur n'est pas l'un des numéros, et la durée minimale est de `n×10 + (n−1)×3` minutes ;
+- un atelier a un nombre de places limité, et ses participants sont uniques sans tenir compte de la casse ;
+- un nom d'artiste ou de salle est non vide, et une salle compte au moins 1 place.
+
+## Installer, lancer, tester
+
+Nécessite Python 3.12+ et [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync                                   # install everything
+uv sync                                   # installe tout
 
-uv run deauville programme 2027-06-11     # programme of a festival day
-uv run deauville artists                  # artists with their number of shows
-uv run deauville now --at 2027-06-11T21:30  # on stage + next 3 (default: now)
-uv run deauville serve                    # http://127.0.0.1:8000/  (admin: /admin/, docs: /docs)
+uv run deauville programme 2027-06-11     # programme d'une journée de festival
+uv run deauville artists                  # artistes avec leur nombre de spectacles
+uv run deauville now --at 2027-06-11T21:30  # en scène + les 3 suivants (défaut : maintenant)
+uv run deauville serve                    # http://127.0.0.1:8000/  (admin : /admin/, docs : /docs)
 
-uv run pytest                             # the tests
+uv run pytest                             # les tests
 uv run ruff check . && uv run ruff format --check .
-uv build                                  # wheel + sdist in dist/
+uv build                                  # wheel + sdist dans dist/
 ```
 
-`uv run python -m deauville <command>` works too. The default data file is
-`data/festival.json`; use `--data` to choose another one. The extension decides
-the storage: `.db`, `.sqlite` or `.sqlite3` is SQLite, anything else is JSON.
+`uv run python -m deauville <commande>` fonctionne aussi. Le fichier de données
+par défaut est `data/festival.json` ; utilise `--data` pour en choisir un autre.
+L'extension décide du stockage : `.db`, `.sqlite` ou `.sqlite3` donne SQLite,
+tout le reste donne JSON.
 
 ```bash
-uv run deauville convert data/festival.db            # copy the JSON into SQLite
-uv run deauville --data data/festival.db serve       # serve from SQLite
+uv run deauville convert data/festival.db            # copie le JSON dans SQLite
+uv run deauville --data data/festival.db serve       # sert depuis SQLite
 DEAUVILLE_DATA=data/festival.db uv run uvicorn --factory deauville.api:create_app
 ```
 
-## Structure and why
+## Utiliser l'API
+
+Le contrat complet des routes (objets, champs, codes d'erreur) est décrit dans
+[`API.md`](API.md). Un exemple, avec le serveur lancé :
+
+```bash
+curl "http://127.0.0.1:8000/api/now?at=2027-06-11T21:30"
+```
+
+La réponse contient `now_playing` (ce qui est en scène) et `up_next` (les 3
+prochains spectacles au maximum). La documentation interactive est disponible
+sur `/docs`.
+
+## Structure et pourquoi
 
 ```
-src/deauville/               the package (src layout: tests use the installed package)
-  __init__.py                what `import deauville` offers
+src/deauville/               le paquet (src layout : les tests utilisent le paquet installé)
+  __init__.py                ce que propose `import deauville`
   __main__.py                `python -m deauville`
-  exceptions.py              the errors (one class per kind of broken rule)
-  utils.py                   names, slugs, integers, dates, festival day (no state)
+  exceptions.py              les erreurs (une classe par type de règle enfreinte)
+  utils.py                   noms, slugs, entiers, dates, jour de festival (sans état)
   venue.py                   Venue
   artist.py                  Artist
-  performance.py             Performance (abstract), Solo, Lineup, Workshop
-  festival.py                Festival: the only door to change the programme
+  performance.py             Performance (abstraite), Solo, Lineup, Workshop
+  festival.py                Festival : la seule porte pour modifier le programme
   storage/
-    base.py                  Storage (abstract contract)
+    base.py                  Storage (contrat abstrait)
     json_storage.py          JsonStorage
     sqlite_storage.py        SqliteStorage (SQLModel)
-    factory.py               open_storage(): chooses by file extension
-  cli.py                     the command line
-  api.py                     the FastAPI application
-tests/                       pytest, one file per subject
-data/festival.json           the data
-web/public/, web/admin/      the website and the admin
-API.md                       the API contract
-b1/                          early scripts (block B1), kept for history
+    factory.py               open_storage() : choisit selon l'extension du fichier
+  cli.py                     la ligne de commande
+  api.py                     l'application FastAPI
+tests/                       pytest, un fichier par sujet
+data/festival.json           les données
+web/public/, web/admin/      le site public et l'administration
+API.md                       le contrat de l'API
+b1/                          premiers scripts (bloc B1 du projet), conservés pour l'historique
 ```
 
-**Which objects, what does each one know and check?**
-`Venue` and `Artist` check their own values (non-empty trimmed name, seats ≥ 1)
-and compute their slug. A performance checks everything that depends on itself
-only: duration 1–360, kind-specific rules (age 0–18; ≥ 2 distinct acts, host not
-an act, minimum duration `n×10 + (n−1)×3`; workshop places and case-insensitive
-participants). Since the constructors check, a broken object cannot exist,
-whoever builds it. Attributes are private, with read-only properties.
+**Quels objets, et que sait / vérifie chacun ?**
+`Venue` et `Artist` vérifient leurs propres valeurs (nom non vide et sans
+espaces superflus, places ≥ 1) et calculent leur slug. Une représentation
+vérifie tout ce qui ne dépend que d'elle : durée de 1 à 360, règles propres à
+son type (âge de 0 à 18 ; au moins 2 numéros distincts, animateur qui n'est pas
+un numéro, durée minimale `n×10 + (n−1)×3` ; places d'un atelier et
+participants uniques sans tenir compte de la casse). Comme les constructeurs
+vérifient, un objet invalide ne peut pas exister, quelle que soit la personne
+qui le construit. Les attributs sont privés, avec des propriétés en lecture
+seule.
 
-**What do the three kinds share, what differs?**
-`Performance` is an abstract class holding what is common: title, venue, start,
-duration, description, `end`, `id`, `festival_day`, `is_too_close()`. Each
-subclass supplies what changes: who is on stage (`artist_slugs`), the capacity,
-a one-line summary, its saved fields, and optionally a venue check
-(`check_venue`, used by the workshop). Adding a fourth kind means writing one
-subclass; it registers itself by its `kind`, so loading needs no change.
+**Que partagent les trois types, et qu'est-ce qui change ?**
+`Performance` est une classe abstraite qui porte ce qui est commun : titre,
+salle, début, durée, description, `end`, `id`, `festival_day`,
+`is_too_close()`. Chaque sous-classe fournit ce qui change : qui est en scène
+(`artist_slugs`), la capacité, un résumé d'une ligne, ses champs sauvegardés et,
+au besoin, une vérification de la salle (`check_venue`, utilisée par l'atelier).
+Ajouter un quatrième type revient à écrire une sous-classe ; elle s'enregistre
+toute seule grâce à son `kind`, donc le chargement n'a pas à changer.
 
-**Where does a rule live so nobody can bypass it?**
-Rules involving one object live in that object. Rules involving several
-(references exist, day of the festival, 30 minutes for a venue, 30 minutes for
-an artist in any role) live in `Festival`, which is the only way to add,
-replace, remove or register: there is no public list to append to. The CLI,
-the API and the tests all call it. Each change is all-or-nothing (`_change()`
-restores the previous state if a rule is broken **or** if saving fails), and
-the festival saves itself after each successful change.
+**Où vit une règle pour que personne ne puisse la contourner ?**
+Les règles qui concernent un seul objet vivent dans cet objet. Les règles qui
+en concernent plusieurs (les références existent, le jour du festival, 30
+minutes pour une salle, 30 minutes pour un artiste dans n'importe quel rôle)
+vivent dans `Festival`, qui est le seul moyen d'ajouter, remplacer, supprimer
+ou enregistrer : il n'existe aucune liste publique où ajouter directement. La
+CLI, l'API et les tests passent tous par lui. Chaque modification est tout ou
+rien (`_change()` restaure l'état précédent si une règle est enfreinte **ou**
+si la sauvegarde échoue), et le festival se sauvegarde lui-même après chaque
+modification réussie.
 
-**How does the caller know which rule was broken?**
-Each rule raises its own subclass of `FestivalError` with a sentence an
-organiser understands (`VenueBusyError`, `ArtistBusyError`,
-`OutsideFestivalError`, `WorkshopFullError`, `AlreadyExistsError`,
-`NotFoundError`, `InvalidValueError`, `StorageError`). The model knows nothing
-about HTTP: `api.py` maps `NotFoundError` → 404, `ConflictError` → 409,
-`InvalidValueError` → 422, anything else → 500. The CLI prints the sentence and
-exits with 1. The API only checks the *shape* of a request (pydantic); the
-rules stay in the model.
+**Comment l'appelant sait-il quelle règle a été enfreinte ?**
+Chaque règle lève sa propre sous-classe de `FestivalError`, avec une phrase
+qu'un organisateur comprend. Les erreurs de conflit (`VenueBusyError`,
+`ArtistBusyError`, `OutsideFestivalError`, `WorkshopFullError`,
+`AlreadyExistsError`) dérivent toutes de `ConflictError` ; les autres sont
+`NotFoundError`, `InvalidValueError` et `StorageError`. Le modèle ne sait rien
+de HTTP : `api.py` associe `NotFoundError` → 404, `ConflictError` → 409,
+`InvalidValueError` → 422, et tout le reste → 500. La CLI affiche la phrase et
+quitte avec le code 1. L'API ne vérifie que la *forme* d'une requête
+(pydantic) ; les règles restent dans le modèle.
 
-**If the data moved from JSON to a database, which files would change?**
-Only a new storage file. `Storage` is the contract (`load()`, `save()`); the
-festival only knows that contract. This was done for real: `storage/sqlite_storage.py`
-is the whole SQLite support, plus two lines choosing it in `open_storage()`.
-The model, the CLI and the API did not change. `load()` rebuilds the festival
-through its public methods, so every rule is checked again for both storages,
-and a broken file or row gives a `StorageError` sentence, not a traceback.
+**Si les données passaient du JSON à une base, quels fichiers changeraient ?**
+Seulement un nouveau fichier de stockage. `Storage` est le contrat (`load()`,
+`save()`) ; le festival ne connaît que ce contrat. Cela a été fait pour de
+vrai : `storage/sqlite_storage.py` constitue tout le support SQLite, plus deux
+lignes qui le choisissent dans `open_storage()`. Le modèle, la CLI et l'API
+n'ont pas changé. `load()` reconstruit le festival par ses méthodes publiques,
+donc toutes les règles sont revérifiées pour les deux stockages, et un fichier
+ou une ligne cassés donnent une phrase `StorageError`, pas une trace d'erreur.
 
-Other choices: JSON is written to a temporary file then renamed, so a failure
-never leaves half a file. In the API, a lock serves one request at a time,
-because the festival lives in memory and routes run in threads.
+Autres choix : le JSON est écrit dans un fichier temporaire puis renommé, donc
+un échec ne laisse jamais un fichier à moitié écrit. Dans l'API, un verrou sert
+une requête à la fois, car le festival vit en mémoire et les routes tournent
+dans des threads.
 
-## What is done, and what is not
+## Ce qui est fait
 
-Done:
+**Le modèle et ses règles**
 
-- all the rules of the brief, with clear messages and no change on error;
-- JSON storage and SQLite storage (extension), `convert` command;
-- command line: programme of a day, artists with show counts, now + next 3;
-- all the routes of `API.md`, public website and admin served;
-- 116 pytest tests (models, festival, storages, CLI, API);
-- `ruff check` and `ruff format` clean, type annotations, docstrings,
-  `uv build` works.
+- Les trois types de représentations (`Solo`, `Lineup`, `Workshop`) sont des sous-classes d'une classe abstraite `Performance`. Chacune vérifie ses propres règles : âge de 0 à 18, au moins 2 numéros distincts avec durée minimale `n×10 + (n−1)×3`, places et participants uniques d'un atelier.
+- Les règles qui concernent plusieurs objets sont dans `Festival` : références existantes, jour de festival, 30 minutes d'écart pour une salle, 30 minutes pour un artiste quel que soit son rôle.
+- Chaque modification est tout ou rien : en cas de règle enfreinte ou d'échec de sauvegarde, l'état précédent est restauré.
+- Chaque règle enfreinte lève sa propre erreur, avec une phrase lisible par un organisateur.
 
-Not done / limits:
+**Les stockages**
 
-- SQLite `save()` rewrites all the tables in one transaction at each change:
-  simple and safe for a festival-sized dataset, not meant for large data.
-- No authentication on the admin routes, no concurrent writers on one file
-  (one server process is assumed).
-- No schema migrations for the SQLite database.
+- Stockage JSON (par défaut), écrit via un fichier temporaire puis renommé, donc jamais de fichier à moitié écrit.
+- Stockage SQLite (SQLModel), choisi automatiquement par l'extension `.db`, `.sqlite` ou `.sqlite3`.
+- Commande `convert` pour copier le JSON dans SQLite. Après conversion, les artistes et leurs nombres de spectacles sont identiques depuis les deux stockages.
+- Chargement par les méthodes publiques du festival, donc toutes les règles sont revérifiées. Un fichier ou une ligne cassés donnent une phrase `StorageError`, pas une trace d'erreur.
+
+**La ligne de commande**
+
+- `programme <jour>` : le programme d'une journée de festival.
+- `artists` : les artistes avec leur nombre de spectacles.
+- `now [--at <moment>]` : ce qui est en scène et les 3 spectacles suivants.
+- `convert <fichier>` et `serve [--host] [--port]`.
+- Erreur affichée en une phrase, code de sortie 1.
+
+**L'API web**
+
+- Les 12 routes de `API.md` sont implémentées : 7 en lecture (festival, salles, artistes, fiche artiste, programme avec filtres `day` et `venue`, représentation, `now`) et 5 en écriture (création d'artiste, création, remplacement et suppression de représentation, ajout d'un participant).
+- Codes HTTP cohérents : 404, 409, 422, 500, avec le message de l'erreur du modèle en `detail`.
+- Un verrou sert une requête à la fois, parce que le festival vit en mémoire.
+- Le site public est servi sur `/` et l'administration sur `/admin/`, avec la documentation interactive sur `/docs`.
+
+**La qualité**
+
+- `ruff check` et `ruff format --check` sont propres, avec annotations de types et docstrings.
+- `uv build` produit le wheel et le sdist.
